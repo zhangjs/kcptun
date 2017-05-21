@@ -125,7 +125,7 @@ func main() {
 		},
 		cli.IntFlag{
 			Name:  "conn",
-			Value: 1,
+			Value: 20,
 			Usage: "set num of UDP connections to server",
 		},
 		cli.IntFlag{
@@ -339,7 +339,7 @@ func main() {
 		smuxConfig.KeepAliveInterval = time.Duration(config.KeepAlive) * time.Second
 
 		createConn := func() (*smux.Session, error) {
-			kcpconn, err := kcp.DialWithOptions(config.RemoteAddr, block, config.DataShard, config.ParityShard)
+			kcpconn, err := kcp.DialWithOptions(config.RemoteAddr, block, config.DataShard, config.ParityShard, config.Conn)
 			if err != nil {
 				return nil, errors.Wrap(err, "createConn()")
 			}
@@ -386,16 +386,8 @@ func main() {
 			}
 		}
 
-		numconn := uint16(config.Conn)
-		muxes := make([]struct {
-			session *smux.Session
-			ttl     time.Time
-		}, numconn)
-
-		for k := range muxes {
-			muxes[k].session = waitConn()
-			muxes[k].ttl = time.Now().Add(time.Duration(config.AutoExpire) * time.Second)
-		}
+		session := waitConn()
+		ttl := time.Now().Add(time.Duration(config.AutoExpire) * time.Second)
 
 		chScavenger := make(chan *smux.Session, 128)
 		go scavenger(chScavenger, config.ScavengeTTL)
@@ -407,16 +399,13 @@ func main() {
 				log.Fatalln(err)
 			}
 			checkError(err)
-			idx := rr % numconn
 
 			// do auto expiration && reconnection
-			if muxes[idx].session.IsClosed() || (config.AutoExpire > 0 && time.Now().After(muxes[idx].ttl)) {
-				chScavenger <- muxes[idx].session
-				muxes[idx].session = waitConn()
-				muxes[idx].ttl = time.Now().Add(time.Duration(config.AutoExpire) * time.Second)
+			if session.IsClosed() || (config.AutoExpire > 0 && time.Now().After(ttl)) {
+				chScavenger <- session
 			}
 
-			go handleClient(muxes[idx].session, p1)
+			go handleClient(session, p1)
 			rr++
 		}
 	}
